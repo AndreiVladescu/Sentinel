@@ -5,8 +5,8 @@ import sys
 import threading
 import cv2
 from PyQt5.QtWidgets import QApplication, QMainWindow, QLabel, QVBoxLayout, QWidget
-from PyQt5.QtGui import QImage, QPixmap
-from PyQt5.QtCore import QThread, pyqtSignal, Qt
+from PyQt5.QtGui import QImage, QPixmap, QStandardItem, QStandardItemModel, QFont
+from PyQt5.QtCore import QThread, pyqtSignal, Qt, QModelIndex
 import numpy as np
 from PyQt5 import QtCore, QtGui, QtWidgets
 # from imutils.object_detection import non_max_suppression
@@ -230,32 +230,64 @@ def apply_watermark(image, crosshair_size=350, dial_thickness=1, opacity=0.35):
     font_scale = 1
     line_length = 15
     # FOV = 85deg for 720p
-    start_heading = int(ctrl_data.heading - 85/2)
-    end_heading = int(ctrl_data.heading + 85/2)
-    np_heading = end_heading - start_heading
-    angles = np.linspace(start_heading, end_heading, np_heading)
+    fov = 85
+    heading = ctrl_data.heading - 90 + ctrl_data.sys_az
+    start_heading = int(heading - fov/2)
+    end_heading = int(heading + fov/2)
+    segments = end_heading - start_heading
+    segment_length = int(w / segments)
+    angles = np.linspace(5, w - 5, num=segments)
+
     heading_spacing = int(w / 85)
+    prev_letter = False
+
     for angle in angles:
-        x1 = int(angle * heading_spacing * 3)
+        x1 = int(angle)
         y1 = 45
         x2 = x1
+        offset = 15
         y2 = y1 + line_length
-        cv2.line(watermark, (x1, y1), (x2, y2), graphic_color, 2)
+        temp_heading = int(start_heading + (x1 - angles[0]) * segments / (w-5))
+        watermark = cv2.line(watermark, (x1, y1), (x2, y2), graphic_color, 2)
+        text = ''
+        if prev_letter:
+            watermark = cv2.line(watermark, (x1, y1), (x2, y2), graphic_color, 2)
+            prev_letter = False
+        elif temp_heading == 0 or temp_heading == 360:
+            text = 'E'
+            prev_letter = True
+        elif temp_heading == 45:
+            text = 'NE'
+            prev_letter = True
+        elif temp_heading == 90:
+            text = 'N'
+            prev_letter = True
+        elif temp_heading == 135:
+            text = 'NW'
+            prev_letter = True
+        elif temp_heading == 180:
+            text = 'W'
+            prev_letter = True
+        elif temp_heading == 225:
+            text = 'SW'
+            prev_letter = True
+        elif temp_heading == 270:
+            text = 'S'
+            prev_letter = True
+        elif temp_heading == 315:
+            text = 'SE'
+            prev_letter = True
+        if text != '':
+            watermark = cv2.putText(watermark, text, (x1 - segment_length, y1 - offset), cv2.FONT_HERSHEY_SIMPLEX, 1,
+                                    graphic_color, 2, cv2.LINE_AA)
+        watermark = cv2.line(watermark, (x1, y1), (x2, y2), graphic_color, 2)
+        #prev_letter = False
 
-        if int(angle) == 95:
-            text = "90"
-        elif int(angle) == 174:
-            text = "180"
-        elif int(angle) == 132:
-            text = "N"
-        else:
-            text = ""
-
-        if text:
+        '''if text:
             text_size, _ = cv2.getTextSize(text, font, font_scale, 2)
             text_x = x1 - text_size[0] // 2
             text_y = y2 + text_size[1] + 5
-            cv2.putText(watermark, text, (text_x, text_y), font, font_scale, graphic_color, 2, cv2.LINE_AA)
+            cv2.putText(watermark, text, (text_x, text_y), font, font_scale, graphic_color, 2, cv2.LINE_AA)'''
 
 
     ctrl_data
@@ -530,6 +562,10 @@ class Ui_MainWindow(object):
         self.camera_thread.wait()
         event.accept()
 
+    def on_clicked(self, index):
+        item = self.model.itemFromIndex(index)
+        print (item.text())
+
     def setupUi(self, MainWindow):
         MainWindow.setObjectName("MainWindow")
         MainWindow.resize(1920, 1000)
@@ -637,9 +673,23 @@ class Ui_MainWindow(object):
         self.manualBtn.setObjectName("manualBtn")
         self.targetListView = QtWidgets.QListView(self.rightFrame)
         self.targetListView.setGeometry(QtCore.QRect(30, 290, 281, 361))
+        self.model = QStandardItemModel()
+        self.targetListView.setModel(self.model)
+        self.targetFont = QFont()
+        self.targetFont.setPointSize(20)
+        self.targetListView.clicked[QModelIndex].connect(self.on_clicked)
+        values = ['one', 'two', 'three','one', 'two', 'three','one', 'two', 'three','one', 'two', 'three']
+
+        for i in values:
+            target = QStandardItem(i)
+            target.setEditable(False)
+            target.setFont(self.targetFont)
+            self.model.appendRow(target)
+
         self.targetListView.setObjectName("targetListView")
         self.label_3 = QtWidgets.QLabel(self.rightFrame)
         self.label_3.setGeometry(QtCore.QRect(90, 250, 181, 31))
+
         font = QtGui.QFont()
         font.setPointSize(14)
         font.setBold(True)
