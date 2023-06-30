@@ -38,6 +38,7 @@ rounds_left = 30
 ctrl_data = ControlData()
 displayed_image = None
 
+
 def xbox_thread_func():
     global left_x
     global left_y
@@ -147,9 +148,9 @@ def xbox_serial_process_func(heading_v, azimuth_v, elevation_v):
         modifier = 2
         # print(input_sys)
         if fast_trg:
-            modifier = modifier * 2
+            modifier = modifier * 3
         if slow_trg:
-            modifier = modifier / 2
+            modifier = modifier / 4
 
         az_val = input_sys[0]
         if abs(az_val) > 0.2:
@@ -203,6 +204,12 @@ def xbox_serial_process_func(heading_v, azimuth_v, elevation_v):
             print(ser.readline())
             fire_trg = False
 
+        if ret2_home:
+            ser.write(bytes('a82\n', 'utf-8'))
+            print(ser.readline())
+            ser.write(bytes('e90\n', 'utf-8'))
+            print(ser.readline())
+
         azimuth_v.value = sys_az
         elevation_v.value = sys_el
 
@@ -247,7 +254,7 @@ def apply_watermark(image, crosshair_size=350, dial_thickness=1, opacity=0.35):
         x1 = int(angle)
         y1 = 45
         x2 = x1
-        offset = 15
+        offset = -line_length - 45
         y2 = y1 + line_length
         temp_heading = int(start_heading + (x1 - angles[0]) * segments / (w - 5))
         watermark = cv2.line(watermark, (x1, y1), (x2, y2), graphic_color, 2)
@@ -335,6 +342,7 @@ def apply_watermark(image, crosshair_size=350, dial_thickness=1, opacity=0.35):
 
 class CameraCaptureThread(QThread):
     frame_signal = pyqtSignal(QImage)
+    detections_signal = pyqtSignal(int)
 
     def __init__(self, camera_id=0):
         super().__init__()
@@ -347,15 +355,15 @@ class CameraCaptureThread(QThread):
         global azimuth
         global elevation
         global distance
-        global displayed_image
-        global centers
-        global bboxes
+        global targets
+
+        model = YOLO('yolov8m.pt')  # load an official detection model
 
         zed = sl.Camera()
 
         init = sl.InitParameters()
         init.camera_resolution = sl.RESOLUTION.HD1080
-        init.depth_mode = sl.DEPTH_MODE.ULTRA
+        init.depth_mode = sl.DEPTH_MODE.QUALITY
         init.coordinate_units = sl.UNIT.METER
         err = zed.open(init)
 
@@ -400,6 +408,7 @@ class CameraCaptureThread(QThread):
 
                     distance = depth_map.get_value(half_width, half_height)
                     distance = distance[1]
+                    det_nmbr = 0
 
                     if math.isnan(distance) or math.isinf(distance):
                         distance = -1
@@ -414,10 +423,31 @@ class CameraCaptureThread(QThread):
                         ctrl_data.sys_az = azimuth.value
                         ctrl_data.sys_el = elevation.value
 
-                        left_image = apply_watermark(left_image)
                         if overlay_switch:
-                            for center in centers:
-                                left_image = cv2.circle(left_image, center, 2, (0, 0, 255), 2)
+                            results = model.track(source=left_image, tracker="tracker.yaml", device=0)
+                            result = results[0]
+                            detections = sv.Detections.from_yolov8(result)
+                            detections = detections[detections.class_id == 0]
+                            centers = []
+                            for box in detections.xyxy:
+                                print(box)
+                                centers.append(
+                                    (int(box[0] + (box[2] - box[0]) / 2), int(box[1] + (box[3] - box[1]) / 2)))
+                            box_annotator = sv.BoxAnnotator()
+                            det_nmbr = len(detections.xyxy)
+
+                            labels = [
+                                f"{i}"
+                                for i
+                                in range(0, det_nmbr)
+                            ]
+                            targets = det_nmbr
+                            left_image = box_annotator.annotate(left_image, detections=detections,
+                                                                labels=labels)
+
+                            cv2.waitKey(1)
+
+                        left_image = apply_watermark(left_image)
 
                     cv2.waitKey(1)
                     channel_width = 1
@@ -430,12 +460,12 @@ class CameraCaptureThread(QThread):
                         qt_image = QImage(depth_image_cv.data, img_width, img_height, bytes_per_line,
                                           QImage.Format_Grayscale8)
                     else:
-                        displayed_image = left_image
                         qt_image = QImage(left_image.data, img_width, img_height, bytes_per_line,
                                           QImage.Format_RGB888)
-
+                    self.detections_signal.emit(det_nmbr)
                     self.frame_signal.emit(qt_image)
-            except:
+            except Exception as e:
+                print(e)
                 continue
 
     def stop(self):
@@ -526,6 +556,16 @@ class Ui_MainWindow(object):
         pixmap = QPixmap.fromImage(qt_image)
         self.imgLabel.setPixmap(pixmap)
 
+    def update_detections(self, detections):
+        if detections == self.model.rowCount():
+            return
+        self.model.clear()
+        for i in range(0, detections):
+            target = QStandardItem(str(i))
+            target.setEditable(False)
+            target.setFont(self.targetFont)
+            self.model.appendRow(target)
+
     def closeEvent(self, event):
         self.camera_thread.stop()
         self.camera_thread.wait()
@@ -553,6 +593,7 @@ class Ui_MainWindow(object):
 
         self.camera_thread = CameraCaptureThread()
         self.camera_thread.frame_signal.connect(self.update_frame)
+        self.camera_thread.detections_signal.connect(self.update_detections)
         self.camera_thread.start()
 
         self.rightFrame = QtWidgets.QFrame(self.centralwidget)
@@ -862,47 +903,11 @@ class Ui_MainWindow(object):
         self.label_2.setText(_translate("MainWindow", "Visor Control"))
 
 
-def ml_thread_func():
-    global centers
-    global bboxes
-
-    model = YOLO('yolov8m.pt')  # load an official detection model
-    while True:
-        if overlay_switch:
-            results = model.track(source=displayed_image, tracker="tracker.yaml", device=0)
-            result = results[0]
-            detections = sv.Detections.from_yolov8(result)
-            # detections = detections[detections.class_id == 0]
-            centers = []
-            bboxes = detections.xyxy
-            for box in detections.xyxy:
-                print(box)
-                centers.append((int(box[0] + (box[2] - box[0]) / 2), int(box[1] + (box[3] - box[1]) / 2)))
-            box_annotator = sv.BoxAnnotator()
-            det_nmbr = len(detections.xyxy)
-
-            labels = [
-                f"{i}"
-                for i
-                in range(0, det_nmbr)
-            ]
-
-            annotated_image = box_annotator.annotate(displayed_image.copy(), detections=detections, labels=labels)
-            cv2.circle(annotated_image, (int(annotated_image.shape[1] / 2), int(annotated_image.shape[0] / 2)), 2,
-                       (0, 255, 0), 4)
-            print(centers)
-            '''
-            for center in centers:
-                cv2.circle(annotated_image, center, 2, (0, 0, 255), 2)
-                angles = ballistic_computer.get_camera_angles(center[0], center[1])
-                print(angles)'''
-
-            cv2.waitKey(1)
-
 if __name__ == '__main__':
     global heading
     global azimuth
     global elevation
+    global targets
 
     heading = Value('f', 0.0)
     azimuth = Value('f', 0.0)
@@ -913,9 +918,6 @@ if __name__ == '__main__':
 
     xbox_serial_process = multiprocessing.Process(target=xbox_serial_process_func, args=(heading, azimuth, elevation))
     xbox_serial_process.start()
-
-    ml_thread = threading.Thread(target=ml_thread_func)
-    ml_thread.start()
 
     app = QApplication(sys.argv)
     main_window = CameraApp()
