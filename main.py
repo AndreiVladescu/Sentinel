@@ -1,6 +1,6 @@
 import multiprocessing
 import time
-from multiprocessing import Value, Queue
+from multiprocessing import Value, Queue, Array
 import sys
 import threading
 import cv2
@@ -9,6 +9,8 @@ from PyQt5.QtGui import QImage, QPixmap, QStandardItem, QStandardItemModel, QFon
 from PyQt5.QtCore import QThread, pyqtSignal, Qt, QModelIndex
 import numpy as np
 from PyQt5 import QtCore, QtGui, QtWidgets
+from ultralytics import YOLO
+import supervision as sv
 # from imutils.object_detection import non_max_suppression
 from ballistic_calculator import *
 from pygame.locals import *
@@ -34,7 +36,7 @@ camera_name = "Main Camera"
 rounds_left = 30
 
 ctrl_data = ControlData()
-
+displayed_image = None
 
 def xbox_thread_func():
     global left_x
@@ -133,7 +135,6 @@ def xbox_serial_process_func(heading_v, azimuth_v, elevation_v):
             break
     print(ser.readline())
 
-
     ser.write(bytes('o\n', 'utf-8'))
     heading_v.value = float(ser.readline().decode().split(',')[2])
     azimuth_v.value = sys_az
@@ -205,6 +206,7 @@ def xbox_serial_process_func(heading_v, azimuth_v, elevation_v):
         azimuth_v.value = sys_az
         elevation_v.value = sys_el
 
+
 def apply_watermark(image, crosshair_size=350, dial_thickness=1, opacity=0.35):
     global ctrl_data
 
@@ -232,8 +234,8 @@ def apply_watermark(image, crosshair_size=350, dial_thickness=1, opacity=0.35):
     # FOV = 85deg for 720p
     fov = 85
     heading = ctrl_data.heading - 90 + ctrl_data.sys_az
-    start_heading = int(heading - fov/2)
-    end_heading = int(heading + fov/2)
+    start_heading = int(heading - fov / 2)
+    end_heading = int(heading + fov / 2)
     segments = end_heading - start_heading
     segment_length = int(w / segments)
     angles = np.linspace(5, w - 5, num=segments)
@@ -247,7 +249,7 @@ def apply_watermark(image, crosshair_size=350, dial_thickness=1, opacity=0.35):
         x2 = x1
         offset = 15
         y2 = y1 + line_length
-        temp_heading = int(start_heading + (x1 - angles[0]) * segments / (w-5))
+        temp_heading = int(start_heading + (x1 - angles[0]) * segments / (w - 5))
         watermark = cv2.line(watermark, (x1, y1), (x2, y2), graphic_color, 2)
         text = ''
         if prev_letter:
@@ -281,14 +283,13 @@ def apply_watermark(image, crosshair_size=350, dial_thickness=1, opacity=0.35):
             watermark = cv2.putText(watermark, text, (x1 - segment_length, y1 - offset), cv2.FONT_HERSHEY_SIMPLEX, 1,
                                     graphic_color, 2, cv2.LINE_AA)
         watermark = cv2.line(watermark, (x1, y1), (x2, y2), graphic_color, 2)
-        #prev_letter = False
+        # prev_letter = False
 
         '''if text:
             text_size, _ = cv2.getTextSize(text, font, font_scale, 2)
             text_x = x1 - text_size[0] // 2
             text_y = y2 + text_size[1] + 5
             cv2.putText(watermark, text, (text_x, text_y), font, font_scale, graphic_color, 2, cv2.LINE_AA)'''
-
 
     ctrl_data
 
@@ -308,14 +309,13 @@ def apply_watermark(image, crosshair_size=350, dial_thickness=1, opacity=0.35):
     watermark = cv2.line(watermark, azimuth_start_point, azimuth_end_point, graphic_color, 5)
     watermark = cv2.line(watermark, elevation_start_point, elevation_end_point, graphic_color, 5)
 
-
-    #text_to_add = str(rounds_left) + " Rounds Left"
+    # text_to_add = str(rounds_left) + " Rounds Left"
     font = cv2.FONT_HERSHEY_SIMPLEX
     font_scale = 0.6
     font_thickness = 1
     text_color = graphic_color
 
-    #add_text_next_to_dial(watermark, text_to_add, center, crosshair_size * 2, text_color, font, font_scale,
+    # add_text_next_to_dial(watermark, text_to_add, center, crosshair_size * 2, text_color, font, font_scale,
     #                      font_thickness)
 
     text_to_add = "Distance " + str(round(distance, 1)) + "m"
@@ -347,6 +347,9 @@ class CameraCaptureThread(QThread):
         global azimuth
         global elevation
         global distance
+        global displayed_image
+        global centers
+        global bboxes
 
         zed = sl.Camera()
 
@@ -382,46 +385,12 @@ class CameraCaptureThread(QThread):
         distance = 4000
 
         # cap = cv2.VideoCapture(self.camera_id)
-        '''while heading.value == 0:
+        while heading.value == 0:
             sleep(0.1)
 
-        ctrl_data.heading = heading.value'''
+        ctrl_data.heading = heading.value
 
         while self.is_running:
-            '''
-            ret, frame = cap.read()
-            if not ret:
-                break
-            try:
-                
-                rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-
-                
-                if overlay_switch:
-                    (rects, weights) = hog.detectMultiScale(rgb_image, winStride=(4, 4),
-                                                            padding=(8, 8), scale=1.05)
-                    rects = np.array([[x, y, x + w, y + h] for (x, y, w, h) in rects])
-                    pick = non_max_suppression(rects, probs=None, overlapThresh=0.65)
-
-                    for (xA, yA, xB, yB), weight in zip(pick, weights):
-                        cv2.rectangle(rgb_image, (xA, yA), (xB, yB), (0, 255, 0), 2)
-                        if isinstance(weights, np.ndarray) and len(weights) > 0 and targets_switch:
-                            cv2.putText(rgb_image, f"{weight:.2f}", (xA, yA - 10),
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-                
-                rgb_image = cv2.resize(rgb_image, (1591, 901))
-                h, w, ch = rgb_image.shape
-                bytes_per_line = ch * w
-                img_format = QImage.Format_RGB888
-
-                rgb_image = apply_watermark(rgb_image)
-
-                if bw_image_switch:
-                    bytes_per_line = w
-                    img_format = QImage.Format_Grayscale8
-                    rgb_image = cv2.cvtColor(rgb_image, cv2.COLOR_BGR2GRAY)
-                    #rgb_image = cv2.threshold(rgb_image, 127, 255, cv2.THRESH_BINARY)[1]
-                '''
             try:
                 err = zed.grab(runtime)
                 if err == sl.ERROR_CODE.SUCCESS:
@@ -446,10 +415,9 @@ class CameraCaptureThread(QThread):
                         ctrl_data.sys_el = elevation.value
 
                         left_image = apply_watermark(left_image)
-
-                        #left_image = cv2.putText(left_image, 'Distance: ' + str(int(distance)) + 'cm',
-                        #                         (0, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255),
-                        #                         1, cv2.LINE_AA, False)
+                        if overlay_switch:
+                            for center in centers:
+                                left_image = cv2.circle(left_image, center, 2, (0, 0, 255), 2)
 
                     cv2.waitKey(1)
                     channel_width = 1
@@ -462,6 +430,7 @@ class CameraCaptureThread(QThread):
                         qt_image = QImage(depth_image_cv.data, img_width, img_height, bytes_per_line,
                                           QImage.Format_Grayscale8)
                     else:
+                        displayed_image = left_image
                         qt_image = QImage(left_image.data, img_width, img_height, bytes_per_line,
                                           QImage.Format_RGB888)
 
@@ -564,7 +533,7 @@ class Ui_MainWindow(object):
 
     def on_clicked(self, index):
         item = self.model.itemFromIndex(index)
-        print (item.text())
+        print(item.text())
 
     def setupUi(self, MainWindow):
         MainWindow.setObjectName("MainWindow")
@@ -580,7 +549,7 @@ class Ui_MainWindow(object):
         self.imageFrame.setObjectName("imageFrame")
 
         self.imgLabel = QLabel(self.imageFrame)
-        self.imgLabel.setGeometry(0, 0, 1591, 901)
+        self.imgLabel.setGeometry(0, 0, 1591, 881)
 
         self.camera_thread = CameraCaptureThread()
         self.camera_thread.frame_signal.connect(self.update_frame)
@@ -678,7 +647,7 @@ class Ui_MainWindow(object):
         self.targetFont = QFont()
         self.targetFont.setPointSize(20)
         self.targetListView.clicked[QModelIndex].connect(self.on_clicked)
-        values = ['one', 'two', 'three','one', 'two', 'three','one', 'two', 'three','one', 'two', 'three']
+        values = ['one', 'two', 'three', 'one', 'two', 'three', 'one', 'two', 'three', 'one', 'two', 'three']
 
         for i in values:
             target = QStandardItem(i)
@@ -893,17 +862,44 @@ class Ui_MainWindow(object):
         self.label_2.setText(_translate("MainWindow", "Visor Control"))
 
 
+def ml_thread_func():
+    global centers
+    global bboxes
+
+    model = YOLO('yolov8m.pt')  # load an official detection model
+    while True:
+        if overlay_switch:
+            results = model.track(source=displayed_image, tracker="tracker.yaml", device=0)
+            result = results[0]
+            detections = sv.Detections.from_yolov8(result)
+            # detections = detections[detections.class_id == 0]
+            centers = []
+            bboxes = detections.xyxy
+            for box in detections.xyxy:
+                print(box)
+                centers.append((int(box[0] + (box[2] - box[0]) / 2), int(box[1] + (box[3] - box[1]) / 2)))
+            box_annotator = sv.BoxAnnotator()
+            det_nmbr = len(detections.xyxy)
+
+            labels = [
+                f"{i}"
+                for i
+                in range(0, det_nmbr)
+            ]
+
+            annotated_image = box_annotator.annotate(displayed_image.copy(), detections=detections, labels=labels)
+            cv2.circle(annotated_image, (int(annotated_image.shape[1] / 2), int(annotated_image.shape[0] / 2)), 2,
+                       (0, 255, 0), 4)
+            print(centers)
+            '''
+            for center in centers:
+                cv2.circle(annotated_image, center, 2, (0, 0, 255), 2)
+                angles = ballistic_computer.get_camera_angles(center[0], center[1])
+                print(angles)'''
+
+            cv2.waitKey(1)
+
 if __name__ == '__main__':
-    '''sm = None
-    try:
-        sm = SharedMemory(name='ControlDataMemory', create=True, size=1024)
-    except:
-        sm = SharedMemory(name='ControlDataMemory', create=False, size=1024)
-    for i in range(0, 1023):
-        sm.buf[i] = 0
-    serial_data = pickle.dumps(ctrl_data)
-    sm.buf[:len(serial_data)] = serial_data
-'''
     global heading
     global azimuth
     global elevation
@@ -917,6 +913,9 @@ if __name__ == '__main__':
 
     xbox_serial_process = multiprocessing.Process(target=xbox_serial_process_func, args=(heading, azimuth, elevation))
     xbox_serial_process.start()
+
+    ml_thread = threading.Thread(target=ml_thread_func)
+    ml_thread.start()
 
     app = QApplication(sys.argv)
     main_window = CameraApp()

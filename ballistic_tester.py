@@ -44,7 +44,7 @@ def main():
     '''
 
         detections = sv.Detections.from_yolov8(result)
-        detections = detections[detections.class_id == 0]
+        #detections = detections[detections.class_id == 0]
         centers = []
         for box in detections.xyxy:
             print(box)
