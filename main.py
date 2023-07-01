@@ -32,12 +32,17 @@ bw_image_switch = False
 zoomed_switch = False
 overlay_switch = False
 targets_switch = False
-camera_name = "Main Camera"
+camera = 0
 rounds_left = 30
 
 ctrl_data = ControlData()
 displayed_image = None
 
+# 0 = manual
+# 1 = supervized
+# 2 = autonomous
+
+operation_mode = 0
 
 def xbox_thread_func():
     global left_x
@@ -109,7 +114,7 @@ def xbox_thread_func():
                     sys.exit()
 
 
-def xbox_serial_process_func(heading_v, azimuth_v, elevation_v):
+def xbox_serial_process_func(heading_v, azimuth_v, elevation_v, laser_v, trigger_v):
     global fire_trg
     global sys_el
     global sys_az
@@ -199,10 +204,20 @@ def xbox_serial_process_func(heading_v, azimuth_v, elevation_v):
             print(ser.readline())
             laser_trg = False
 
+        if laser_v.value:
+            ser.write(bytes('l\n', 'utf-8'))
+            print(ser.readline())
+            laser_v.value = False
+
         if fire_trg:
             ser.write(bytes('f\n', 'utf-8'))
             print(ser.readline())
             fire_trg = False
+
+        if trigger_v.value:
+            ser.write(bytes('f\n', 'utf-8'))
+            print(ser.readline())
+            trigger_v.value = False
 
         if ret2_home:
             ser.write(bytes('a82\n', 'utf-8'))
@@ -298,7 +313,7 @@ def apply_watermark(image, crosshair_size=350, dial_thickness=1, opacity=0.35):
             text_y = y2 + text_size[1] + 5
             cv2.putText(watermark, text, (text_x, text_y), font, font_scale, graphic_color, 2, cv2.LINE_AA)'''
 
-    ctrl_data
+    #ctrl_data
 
     azimuth = int(ctrl_data.sys_az)
     elevation = int(ctrl_data.sys_el)
@@ -332,7 +347,13 @@ def apply_watermark(image, crosshair_size=350, dial_thickness=1, opacity=0.35):
 
     add_current_time(watermark, text_color, font, font_scale, font_thickness)
 
-    text_to_add_lower_left = camera_name
+    if camera == 0:
+        text_to_add_lower_left = "Main Camera"
+    elif camera == 1:
+        text_to_add_lower_left = "A Camera"
+    else:
+        text_to_add_lower_left = "B Camera"
+
     add_text_lower_left(watermark, text_to_add_lower_left, text_color, font, font_scale, font_thickness)
 
     # Apply watermark to the image
@@ -357,25 +378,41 @@ class CameraCaptureThread(QThread):
         global distance
         global targets
 
-        model = YOLO('yolov8m.pt')  # load an official detection model
+        model = YOLO('yolov8m.pt')
 
-        zed = sl.Camera()
+        zed_list = []
 
         init = sl.InitParameters()
         init.camera_resolution = sl.RESOLUTION.HD1080
         init.depth_mode = sl.DEPTH_MODE.QUALITY
         init.coordinate_units = sl.UNIT.METER
-        err = zed.open(init)
 
-        if err != sl.ERROR_CODE.SUCCESS:
-            print(repr(err))
-            zed.close()
-            exit(1)
+        cameras = sl.Camera.get_device_list()
+        index = 0
+        for cam in cameras:
+            init.set_from_serial_number(cam.serial_number)
+            if cam.serial_number == 14843:
+                zed_list.append(sl.Camera())
+            elif cam.serial_number == 14838:
+                zed_list.append(sl.Camera())
+            else:
+                b_camera = sl.Camera()
+
+            err = zed_list[index].open(init)
+
+            if err != sl.ERROR_CODE.SUCCESS:
+                print(repr(err))
+                zed_list[index].close()
+                exit(1)
+            index = index + 1
+
+        zed = None
+
         runtime = sl.RuntimeParameters()
         runtime.sensing_mode = sl.SENSING_MODE.STANDARD
 
         # Prepare new image size to retrieve half-resolution images
-        image_size = zed.get_camera_information().camera_resolution
+        image_size = zed_list[0].get_camera_information().camera_resolution
         img_width = 1591
         img_height = 881
         image_size.width = img_width
@@ -400,6 +437,14 @@ class CameraCaptureThread(QThread):
 
         while self.is_running:
             try:
+                # global variable for switching
+                if camera == 0:
+                    zed = zed_list[0]
+                elif camera == 1:
+                    zed = zed_list[1]
+                else:
+                    zed = zed_list[2]
+
                 err = zed.grab(runtime)
                 if err == sl.ERROR_CODE.SUCCESS:
                     zed.retrieve_image(image_zed, sl.VIEW.LEFT, sl.MEM.CPU, image_size)
@@ -517,40 +562,41 @@ class Ui_MainWindow(object):
 
     def btn_right1_func(self):
         pass
-
+    def btn_cam_main(self):
+        global camera
+        camera = 0
+    def btn_cam_a(self):
+        global camera
+        camera = 1
+    def btn_cam_b(self):
+        global camera
+        camera = 2
     def btn_forget_func(self):
         pass
-
-    def btn_main_func(self):
-        global camera_name
-        camera_name = "Main Camera"
-
-    def btn_a_func(self):
-        global camera_name
-        camera_name = "'A' Camera"
-
-    def btn_b_func(self):
-        global camera_name
-        camera_name = "'B' Camera"
 
     def btn_toggle_func(self):
         global bw_image_switch
         bw_image_switch = not bw_image_switch
 
     def btn_supervized_func(self):
-        pass
+        global operation_mode
+        operation_mode = 1
 
     def btn_engage_func(self):
-        pass
+        global trigger_v
+        trigger_v.value = True
 
     def btn_manual_func(self):
-        pass
+        global operation_mode
+        operation_mode = 0
 
     def btn_auto_func(self):
-        pass
+        global operation_mode
+        operation_mode = 2
 
     def btn_laser_func(self):
-        pass
+        global laser_v
+        laser_v.value = True
 
     def update_frame(self, qt_image):
         pixmap = QPixmap.fromImage(qt_image)
@@ -845,10 +891,7 @@ class Ui_MainWindow(object):
 
         # Functions
         self.toggleBtn.clicked.connect(self.btn_toggle_func)
-        self.mainBtn.clicked.connect(self.btn_main_func)
         self.autoBtn.clicked.connect(self.btn_auto_func)
-        self.aBtn.clicked.connect(self.btn_a_func)
-        self.bBtn.clicked.connect(self.btn_b_func)
         self.laserBtn.clicked.connect(self.btn_laser_func)
         self.manualBtn.clicked.connect(self.btn_manual_func)
         self.supBtn.clicked.connect(self.btn_supervized_func)
@@ -865,7 +908,9 @@ class Ui_MainWindow(object):
         self.overlayBtn.clicked.connect(self.btn_overlay_func)
         self.home1Btn.clicked.connect(self.btn_home1_func)
         self.home2Btn.clicked.connect(self.btn_home2_func)
-
+        self.mainBtn.clicked.connect(self.btn_cam_main)
+        self.aBtn.clicked.connect(self.btn_cam_a)
+        self.bBtn.clicked.connect(self.btn_cam_b)
         self.retranslateUi(MainWindow)
         QtCore.QMetaObject.connectSlotsByName(MainWindow)
 
@@ -908,15 +953,17 @@ if __name__ == '__main__':
     global azimuth
     global elevation
     global targets
+    global laser_v
+    global trigger_v
 
     heading = Value('f', 0.0)
     azimuth = Value('f', 0.0)
     elevation = Value('f', 0.0)
+    laser_v = Value('b', False)
+    trigger_v = Value('b', False)
 
-    laser_lock = Lock()
-    tigger_lock = Lock()
 
-    xbox_serial_process = multiprocessing.Process(target=xbox_serial_process_func, args=(heading, azimuth, elevation))
+    xbox_serial_process = multiprocessing.Process(target=xbox_serial_process_func, args=(heading, azimuth, elevation, laser_v, trigger_v))
     xbox_serial_process.start()
 
     app = QApplication(sys.argv)
