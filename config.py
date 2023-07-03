@@ -1,6 +1,6 @@
 sys_az = 90
 sys_el = 0
-vis_az = 90
+vis_az = 82
 vis_el = 90
 
 # Whole system
@@ -14,13 +14,13 @@ fire_trg = False
 laser_trg = False
 fast_trg = False
 slow_trg = False
-ret2_home = False
+ret2_home_vis = False
 
 class ControlData:
     def __init__(self):
         self.sys_az = 90
         self.sys_el = 0
-        self.vis_az = 90
+        self.vis_az = 82
         self.vis_el = 90
 
         # Whole system

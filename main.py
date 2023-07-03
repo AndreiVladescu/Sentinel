@@ -1,4 +1,5 @@
 import multiprocessing
+import os
 import time
 from multiprocessing import Value, Queue, Array
 import sys
@@ -26,8 +27,6 @@ from config import *
 from time import sleep
 import pickle
 
-ballistic_calculator = BallisticCalculator(resolution=(1088, 640))
-
 bw_image_switch = False
 zoomed_switch = False
 overlay_switch = False
@@ -44,6 +43,7 @@ displayed_image = None
 
 operation_mode = 0
 
+
 def xbox_thread_func():
     global left_x
     global left_y
@@ -52,7 +52,8 @@ def xbox_thread_func():
     global fire_trg
     global fast_trg
     global slow_trg
-    global ret2_home
+    global ret2_home_vis
+    global ret2_home_sys
     global laser_trg
 
     input_sys = [0, 0]
@@ -86,8 +87,11 @@ def xbox_thread_func():
                     print("B LASER")
                     laser_trg = not laser_trg
                 elif event.button == Y:
-                    print("Y Ret2 Home")
-                    ret2_home = True
+                    print("Y Ret2 Home Vis")
+                    ret2_home_vis = True
+                elif event.button == A:
+                    print("A Ret2 Home Sys")
+                    ret2_home_sys = True
             if event.type == JOYAXISMOTION:
                 # print(event.axis)
                 if event.axis < 2:
@@ -114,7 +118,7 @@ def xbox_thread_func():
                     sys.exit()
 
 
-def xbox_serial_process_func(heading_v, azimuth_v, elevation_v, laser_v, trigger_v):
+def xbox_serial_process_func(heading_v, azimuth_v, elevation_v, laser_v, trigger_v, operation_mode_v, movement_lock_p):
     global fire_trg
     global sys_el
     global sys_az
@@ -127,11 +131,15 @@ def xbox_serial_process_func(heading_v, azimuth_v, elevation_v, laser_v, trigger
     global fast_trg
     global slow_trg
     global laser_trg
+    global ret2_home_vis
+    global ret2_home_sys
+
+    ser = serial.Serial('COM8', baudrate=115200)
 
     xbox_th = threading.Thread(target=xbox_thread_func)
     xbox_th.start()
 
-    ser = serial.Serial('COM8', baudrate=115200)
+    print('Waiting for boot messages')
 
     while True:
         line = ser.readline().decode('utf-8').strip()  # Read a line from the serial port
@@ -139,102 +147,153 @@ def xbox_serial_process_func(heading_v, azimuth_v, elevation_v, laser_v, trigger
         print(line)
         if line.startswith('entry'):
             break
+
+    print('Waiting for homing message')
+
+    # ser.write(bytes('y\n', 'utf-8'))
+    # time.sleep(0.5)
     print(ser.readline())
 
     ser.write(bytes('o\n', 'utf-8'))
     heading_v.value = float(ser.readline().decode().split(',')[2])
     azimuth_v.value = sys_az
     elevation_v.value = sys_el
-
+    ret2_home_sys = False
+    ret2_home_vis = False
+    prev_val_az = 90
+    prev_val_el = 0
     while True:
-        input_vis = [left_x, left_y]
-        input_sys = [right_x, right_y]
+        try:
+            input_vis = [0, 0]
+            input_sys = [0, 0]
 
-        modifier = 2
-        # print(input_sys)
-        if fast_trg:
-            modifier = modifier * 3
-        if slow_trg:
-            modifier = modifier / 4
+            if operation_mode_v.value == 0:
+                input_vis = [left_x, left_y]
+                input_sys = [right_x, right_y]
 
-        az_val = input_sys[0]
-        if abs(az_val) > 0.2:
-            signum = az_val / abs(az_val)
-            val = tanh(az_val + signum * 0.35) * modifier
-            if sys_az > 15 and sys_az < 165:
-                sys_az = sys_az + val
-                sys_az = round(sys_az, 3)
-                print('A' + str(sys_az))
-                ser.write(bytes('A' + str(sys_az) + '\n', 'utf-8'))
-                print(ser.readline())
+                modifier = 2
+                # print(input_sys)
+                if fast_trg:
+                    modifier = modifier * 3
+                if slow_trg:
+                    modifier = modifier / 4
 
-        el_val = input_sys[1]
-        if abs(el_val) > 0.2:
-            signum = el_val / abs(el_val)
-            val = tanh(el_val + signum * 0.25) * modifier
-            if sys_el > -30 and sys_el < 30:
-                sys_el = sys_el + val
-                sys_el = round(sys_el, 3)
-                print('E' + str(sys_el))
-                ser.write(bytes('E' + str(sys_el) + '\n', 'utf-8'))
-                print(ser.readline())
+                az_val = input_sys[0]
+                if abs(az_val) > 0.2:
+                    signum = az_val / abs(az_val)
+                    val = tanh(az_val + signum * 0.35) * modifier
+                    if 10 < sys_az < 170:
+                        sys_az = sys_az + val
+                        sys_az = round(sys_az, 3)
+                        print('A' + str(sys_az))
+                        ser.write(bytes('A' + str(sys_az) + '\n', 'utf-8'))
+                        print(ser.readline())
 
-        az_val = input_vis[0]
-        if abs(az_val) > 0.2:
-            val = tanh(az_val) * modifier
-            if vis_az > 10 and vis_az < 170:
-                vis_az = vis_az + val
-                vis_az = round(vis_az, 3)
-                print('a' + str(vis_az))
-                ser.write(bytes('a' + str(vis_az) + '\n', 'utf-8'))
-                print(ser.readline())
+                el_val = -input_sys[1]
+                if abs(el_val) > 0.2:
+                    signum = el_val / abs(el_val)
+                    val = tanh(el_val + signum * 0.25) * modifier
+                    if -30 < sys_el < 30:
+                        sys_el = sys_el + val
+                        sys_el = round(sys_el, 3)
+                        print('E' + str(sys_el))
+                        ser.write(bytes('E' + str(sys_el) + '\n', 'utf-8'))
+                        print(ser.readline())
 
-        el_val = input_vis[1]
-        if abs(el_val) > 0.2:
-            val = tanh(el_val) * modifier
-            if vis_el > 70 and vis_el < 110:
-                vis_el = vis_el + val
-                vis_el = round(vis_el, 3)
-                print('e' + str(vis_el))
-                ser.write(bytes('e' + str(vis_el) + '\n', 'utf-8'))
-                print(ser.readline())
+                az_val = -input_vis[0]
+                if abs(az_val) > 0.2:
+                    val = tanh(az_val) * modifier
+                    if 0 < vis_az < 180:
+                        vis_az = vis_az + val
+                        vis_az = round(vis_az, 0)
+                        print('a' + str(vis_az))
+                        ser.write(bytes('a' + str(vis_az) + '\n', 'utf-8'))
+                        print(ser.readline())
 
-        if laser_trg:
-            ser.write(bytes('l\n', 'utf-8'))
-            print(ser.readline())
-            laser_trg = False
+                el_val = input_vis[1]
+                if abs(el_val) > 0.2:
+                    val = tanh(el_val) * modifier
+                    if 40 < vis_el < 150:
+                        vis_el = vis_el + val
+                        vis_el = round(vis_el, 0)
+                        print('e' + str(vis_el))
+                        ser.write(bytes('e' + str(vis_el) + '\n', 'utf-8'))
+                        print(ser.readline())
 
-        if laser_v.value:
-            ser.write(bytes('l\n', 'utf-8'))
-            print(ser.readline())
-            laser_v.value = False
+                if laser_trg:
+                    ser.write(bytes('l\n', 'utf-8'))
+                    print(ser.readline())
+                    laser_trg = False
 
-        if fire_trg:
-            ser.write(bytes('f\n', 'utf-8'))
-            print(ser.readline())
-            fire_trg = False
+                if laser_v.value:
+                    ser.write(bytes('l\n', 'utf-8'))
+                    print(ser.readline())
+                    laser_v.value = False
 
-        if trigger_v.value:
-            ser.write(bytes('f\n', 'utf-8'))
-            print(ser.readline())
-            trigger_v.value = False
+                if fire_trg:
+                    ser.write(bytes('f\n', 'utf-8'))
+                    print(ser.readline())
+                    fire_trg = False
 
-        if ret2_home:
-            ser.write(bytes('a82\n', 'utf-8'))
-            print(ser.readline())
-            ser.write(bytes('e90\n', 'utf-8'))
-            print(ser.readline())
+                if trigger_v.value:
+                    ser.write(bytes('f\n', 'utf-8'))
+                    print(ser.readline())
+                    trigger_v.value = False
 
-        azimuth_v.value = sys_az
-        elevation_v.value = sys_el
+                if ret2_home_vis:
+                    ser.write(bytes('a82\n', 'utf-8'))
+                    print(ser.readline())
+                    ser.write(bytes('e90\n', 'utf-8'))
+                    print(ser.readline())
+                    vis_el = 90
+                    vis_az = 82
+                    ret2_home_vis = False
+
+                if ret2_home_sys:
+                    ser.write(bytes('A90\n', 'utf-8'))
+                    print(ser.readline())
+                    ser.write(bytes('E0\n', 'utf-8'))
+                    print(ser.readline())
+                    sys_az = 90
+                    sys_el = 90
+                    ret2_home_sys = False
+                movement_lock_p.acquire()
+                azimuth_v.value = sys_az
+                elevation_v.value = sys_el
+                movement_lock_p.release()
+
+            elif operation_mode_v.value >= 1:
+
+                if round(azimuth_v.value) != round(prev_val_az):
+                    #movement_lock_p.acquire()
+                    if 10 < azimuth_v.value < 170:
+                        ser.write(bytes('A' + str(round(azimuth_v.value, 3)) + '\n', 'utf-8'))
+                        print(ser.readline())
+                    prev_val_az = azimuth_v.value
+                    #movement_lock_p.release()
+
+                if round(elevation_v.value) != round(prev_val_el):
+                    #movement_lock_p.acquire()
+                    if -30 < elevation_v.value < 30:
+                        ser.write(bytes('E' + str(round(elevation_v.value, 3)) + '\n', 'utf-8'))
+                        print(ser.readline())
+                    prev_val_el = elevation_v.value
+
+                    #movement_lock_p.release()
 
 
-def apply_watermark(image, crosshair_size=350, dial_thickness=1, opacity=0.35):
+        except Exception as e:
+            print(e)
+            continue
+
+
+def apply_watermark(image, crosshair_size=350, dial_thickness=2, opacity=0.85):
     global ctrl_data
 
     h, w, d = image.shape[:3]
     watermark = np.zeros((h, w, d), dtype=np.uint8)
-    graphic_color = (168, 98, 50)
+    # graphic_color = (168, 98, 50)
+    graphic_color = (192, 0, 0)
     # Draw crosshair
     ch_length = crosshair_size // 2
     center = (w // 2, h // 2)
@@ -313,7 +372,7 @@ def apply_watermark(image, crosshair_size=350, dial_thickness=1, opacity=0.35):
             text_y = y2 + text_size[1] + 5
             cv2.putText(watermark, text, (text_x, text_y), font, font_scale, graphic_color, 2, cv2.LINE_AA)'''
 
-    #ctrl_data
+    # ctrl_data
 
     azimuth = int(ctrl_data.sys_az)
     elevation = int(ctrl_data.sys_el)
@@ -357,7 +416,7 @@ def apply_watermark(image, crosshair_size=350, dial_thickness=1, opacity=0.35):
     add_text_lower_left(watermark, text_to_add_lower_left, text_color, font, font_scale, font_thickness)
 
     # Apply watermark to the image
-    result = cv2.addWeighted(image, 1 - opacity, watermark, opacity, 0)
+    result = cv2.addWeighted(image, 1, watermark, opacity, 0)
     return result
 
 
@@ -377,6 +436,8 @@ class CameraCaptureThread(QThread):
         global elevation
         global distance
         global targets
+        global movement_lock
+        global ballistic_calculator
 
         model = YOLO('yolov8m.pt')
 
@@ -396,7 +457,7 @@ class CameraCaptureThread(QThread):
             elif cam.serial_number == 14838:
                 zed_list.append(sl.Camera())
             else:
-                b_camera = sl.Camera()
+                zed_list.append(sl.Camera())
 
             err = zed_list[index].open(init)
 
@@ -417,12 +478,13 @@ class CameraCaptureThread(QThread):
         img_height = 881
         image_size.width = img_width
         image_size.height = img_height
-        # ballistic_calculator = BallisticCalculator(resolution=(int(image_size.width), int(image_size.height)))
+        #ballistic_calculator = BallisticCalculator(resolution=(int(image_size.width), int(image_size.height)))
+        ballistic_calculator = BallisticCalculator(resolution=(1920, 1080))
 
         half_width = int(img_width / 2)
         half_height = int(img_height / 2)
 
-        print(half_width, half_height)
+        # print(half_width, half_height)
         # Declare your sl.Mat matrices
         image_zed = sl.Mat(image_size.width, image_size.height, sl.MAT_TYPE.U8_C4)
         depth_image_zed = sl.Mat(image_size.width, image_size.height, sl.MAT_TYPE.U8_C4)
@@ -465,8 +527,10 @@ class CameraCaptureThread(QThread):
                         left_image = image_zed.get_data()
                         left_image = cv2.cvtColor(left_image, cv2.COLOR_BGR2RGB)
 
+                        movement_lock.acquire()
                         ctrl_data.sys_az = azimuth.value
                         ctrl_data.sys_el = elevation.value
+                        movement_lock.release()
 
                         if overlay_switch:
                             results = model.track(source=left_image, tracker="tracker.yaml", device=0)
@@ -489,6 +553,16 @@ class CameraCaptureThread(QThread):
                             targets = det_nmbr
                             left_image = box_annotator.annotate(left_image, detections=detections,
                                                                 labels=labels)
+
+                            if operation_mode == 1 and det_nmbr > 0:
+                                angles = ballistic_calculator.get_camera_angles(centers[0][0], centers[0][1])
+                                print(angles + (90, 0))
+                                movement_lock.acquire()
+                                ctrl_data.sys_az = angles[0]*1.2067 + 90
+                                ctrl_data.sys_el = angles[1]*1.2258
+                                azimuth.value = angles[0]*1.2067 + 90
+                                elevation.value = angles[1]*1.2258
+                                movement_lock.release()
 
                             cv2.waitKey(1)
 
@@ -562,15 +636,19 @@ class Ui_MainWindow(object):
 
     def btn_right1_func(self):
         pass
+
     def btn_cam_main(self):
         global camera
         camera = 0
+
     def btn_cam_a(self):
         global camera
         camera = 1
+
     def btn_cam_b(self):
         global camera
         camera = 2
+
     def btn_forget_func(self):
         pass
 
@@ -580,7 +658,10 @@ class Ui_MainWindow(object):
 
     def btn_supervized_func(self):
         global operation_mode
+        global operation_mode_v
+
         operation_mode = 1
+        operation_mode_v.value = operation_mode
 
     def btn_engage_func(self):
         global trigger_v
@@ -588,11 +669,17 @@ class Ui_MainWindow(object):
 
     def btn_manual_func(self):
         global operation_mode
+        global operation_mode_v
+
         operation_mode = 0
+        operation_mode_v.value = operation_mode
 
     def btn_auto_func(self):
         global operation_mode
+        global operation_mode_v
+
         operation_mode = 2
+        operation_mode_v.value = operation_mode
 
     def btn_laser_func(self):
         global laser_v
@@ -955,6 +1042,8 @@ if __name__ == '__main__':
     global targets
     global laser_v
     global trigger_v
+    global movement_lock
+    global operation_mode_v
 
     heading = Value('f', 0.0)
     azimuth = Value('f', 0.0)
@@ -962,8 +1051,11 @@ if __name__ == '__main__':
     laser_v = Value('b', False)
     trigger_v = Value('b', False)
 
+    movement_lock = multiprocessing.Lock()
+    operation_mode_v = Value('i', 0)
 
-    xbox_serial_process = multiprocessing.Process(target=xbox_serial_process_func, args=(heading, azimuth, elevation, laser_v, trigger_v))
+    xbox_serial_process = multiprocessing.Process(target=xbox_serial_process_func,
+                                                  args=(heading, azimuth, elevation, laser_v, trigger_v, operation_mode_v, movement_lock))
     xbox_serial_process.start()
 
     app = QApplication(sys.argv)
