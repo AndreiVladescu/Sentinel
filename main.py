@@ -139,20 +139,20 @@ def xbox_serial_process_func(heading_v, azimuth_v, elevation_v, laser_v, trigger
     xbox_th = threading.Thread(target=xbox_thread_func)
     xbox_th.start()
 
-    print('Waiting for boot messages')
+    print('Waiting for boot messages', flush=True)
 
     while True:
         line = ser.readline().decode('utf-8').strip()  # Read a line from the serial port
         # Ignore the boot log messages
-        print(line)
+        print(line, flush=True)
         if line.startswith('entry'):
             break
 
-    print('Waiting for homing message')
+    print('Waiting for homing message', flush=True)
 
     # ser.write(bytes('y\n', 'utf-8'))
     # time.sleep(0.5)
-    print(ser.readline())
+    print(ser.readline(), flush=True)
 
     ser.write(bytes('o\n', 'utf-8'))
     heading_v.value = float(ser.readline().decode().split(',')[2])
@@ -265,25 +265,27 @@ def xbox_serial_process_func(heading_v, azimuth_v, elevation_v, laser_v, trigger
             elif operation_mode_v.value >= 1:
 
                 if round(azimuth_v.value) != round(prev_val_az):
-                    #movement_lock_p.acquire()
+                    # movement_lock_p.acquire()
+                    print('A' + str(round(azimuth_v.value, 3)) + '\n', 'utf-8')
                     if 10 < azimuth_v.value < 170:
                         ser.write(bytes('A' + str(round(azimuth_v.value, 3)) + '\n', 'utf-8'))
                         print(ser.readline())
                     prev_val_az = azimuth_v.value
-                    #movement_lock_p.release()
+                    # movement_lock_p.release()
 
                 if round(elevation_v.value) != round(prev_val_el):
-                    #movement_lock_p.acquire()
+                    # movement_lock_p.acquire()
                     if -30 < elevation_v.value < 30:
+                        print('E' + str(round(elevation_v.value, 3)) + '\n', 'utf-8')
                         ser.write(bytes('E' + str(round(elevation_v.value, 3)) + '\n', 'utf-8'))
                         print(ser.readline())
                     prev_val_el = elevation_v.value
 
-                    #movement_lock_p.release()
+                    # movement_lock_p.release()
 
 
         except Exception as e:
-            print(e)
+            print(e, flush=True)
             continue
 
 
@@ -392,8 +394,8 @@ def apply_watermark(image, crosshair_size=350, dial_thickness=2, opacity=0.85):
 
     # text_to_add = str(rounds_left) + " Rounds Left"
     font = cv2.FONT_HERSHEY_SIMPLEX
-    font_scale = 0.6
-    font_thickness = 1
+    font_scale = 0.8
+    font_thickness = 2
     text_color = graphic_color
 
     # add_text_next_to_dial(watermark, text_to_add, center, crosshair_size * 2, text_color, font, font_scale,
@@ -472,14 +474,17 @@ class CameraCaptureThread(QThread):
         runtime = sl.RuntimeParameters()
         runtime.sensing_mode = sl.SENSING_MODE.STANDARD
 
-        # Prepare new image size to retrieve half-resolution images
         image_size = zed_list[0].get_camera_information().camera_resolution
-        img_width = 1591
-        img_height = 881
+        qt_img_width = 1591
+        qt_img_height = 881
+        img_width = 1920
+        img_height = 1080
         image_size.width = img_width
         image_size.height = img_height
-        #ballistic_calculator = BallisticCalculator(resolution=(int(image_size.width), int(image_size.height)))
-        ballistic_calculator = BallisticCalculator(resolution=(1920, 1080))
+        ballistic_calculator = BallisticCalculator(resolution=(image_size.width, image_size.height), focal_length=1400)
+        # ballistic_calculator.fov_h = 45
+        # ballistic_calculator.fov_v = 30
+        # ballistic_calculator = BallisticCalculator()
 
         half_width = int(img_width / 2)
         half_height = int(img_height / 2)
@@ -556,15 +561,21 @@ class CameraCaptureThread(QThread):
 
                             if operation_mode == 1 and det_nmbr > 0:
                                 angles = ballistic_calculator.get_camera_angles(centers[0][0], centers[0][1])
-                                print(angles + (90, 0))
-                                movement_lock.acquire()
-                                ctrl_data.sys_az = angles[0]*1.2067 + 90
-                                ctrl_data.sys_el = angles[1]*1.2258
-                                azimuth.value = angles[0]*1.2067 + 90
-                                elevation.value = angles[1]*1.2258
-                                movement_lock.release()
 
-                            cv2.waitKey(1)
+                                if 10 < ctrl_data.sys_az + angles[0] < 170:
+                                    #movement_lock.acquire()
+                                    ctrl_data.sys_az = ctrl_data.sys_az + angles[0]
+                                    azimuth.value = ctrl_data.sys_az
+                                    #movement_lock.release()
+                                if -30 < ctrl_data.sys_el - angles[1] < 30:
+                                    #movement_lock.acquire()
+                                    ctrl_data.sys_el = ctrl_data.sys_el - angles[1]
+                                    elevation.value = ctrl_data.sys_el
+                                    #movement_lock.release()
+
+                                print(ctrl_data.sys_az, ctrl_data.sys_el)
+
+                            # cv2.waitKey(1)
 
                         left_image = apply_watermark(left_image)
 
@@ -573,13 +584,17 @@ class CameraCaptureThread(QThread):
                     if not bw_image_switch:
                         channel_width = left_image.shape[2]
 
-                    bytes_per_line = channel_width * img_width
+                    bytes_per_line = channel_width * qt_img_width
 
                     if bw_image_switch:
-                        qt_image = QImage(depth_image_cv.data, img_width, img_height, bytes_per_line,
+                        depth_image_cv = cv2.resize(depth_image_cv, (qt_img_width, qt_img_height),
+                                                    interpolation=cv2.INTER_AREA)
+                        qt_image = QImage(depth_image_cv.data, qt_img_width, qt_img_height, bytes_per_line,
                                           QImage.Format_Grayscale8)
                     else:
-                        qt_image = QImage(left_image.data, img_width, img_height, bytes_per_line,
+                        left_image = cv2.resize(left_image, (qt_img_width, qt_img_height),
+                                                    interpolation=cv2.INTER_AREA)
+                        qt_image = QImage(left_image.data, qt_img_width, qt_img_height, bytes_per_line,
                                           QImage.Format_RGB888)
                     self.detections_signal.emit(det_nmbr)
                     self.frame_signal.emit(qt_image)
@@ -1055,7 +1070,9 @@ if __name__ == '__main__':
     operation_mode_v = Value('i', 0)
 
     xbox_serial_process = multiprocessing.Process(target=xbox_serial_process_func,
-                                                  args=(heading, azimuth, elevation, laser_v, trigger_v, operation_mode_v, movement_lock))
+                                                  args=(
+                                                  heading, azimuth, elevation, laser_v, trigger_v, operation_mode_v,
+                                                  movement_lock))
     xbox_serial_process.start()
 
     app = QApplication(sys.argv)
