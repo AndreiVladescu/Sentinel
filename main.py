@@ -17,7 +17,6 @@ from ballistic_calculator import *
 from pygame.locals import *
 import serial
 from math import tanh
-from time import sleep
 from xbox_controller import *
 from interface_funcs import *
 from multiprocessing.shared_memory import SharedMemory
@@ -41,6 +40,7 @@ displayed_image = None
 # 1 = supervized
 # 2 = autonomous
 
+one_in_ten = 10
 operation_mode = 0
 
 
@@ -255,7 +255,7 @@ def xbox_serial_process_func(heading_v, azimuth_v, elevation_v, laser_v, trigger
                     ser.write(bytes('E0\n', 'utf-8'))
                     print(ser.readline())
                     sys_az = 90
-                    sys_el = 90
+                    sys_el = 0
                     ret2_home_sys = False
                 movement_lock_p.acquire()
                 azimuth_v.value = sys_az
@@ -440,6 +440,7 @@ class CameraCaptureThread(QThread):
         global targets
         global movement_lock
         global ballistic_calculator
+        global one_in_ten
 
         model = YOLO('yolov8m.pt')
 
@@ -544,7 +545,7 @@ class CameraCaptureThread(QThread):
                             detections = detections[detections.class_id == 0]
                             centers = []
                             for box in detections.xyxy:
-                                print(box)
+                                #print(box)
                                 centers.append(
                                     (int(box[0] + (box[2] - box[0]) / 2), int(box[1] + (box[3] - box[1]) / 2)))
                             box_annotator = sv.BoxAnnotator()
@@ -560,20 +561,28 @@ class CameraCaptureThread(QThread):
                                                                 labels=labels)
 
                             if operation_mode == 1 and det_nmbr > 0:
-                                angles = ballistic_calculator.get_camera_angles(centers[0][0], centers[0][1])
+                                if one_in_ten != 0:
+                                    one_in_ten = one_in_ten - 1
+                                else:
+                                    one_in_ten = 2
+                                    angles = ballistic_calculator.get_camera_angles(centers[0][0], centers[0][1])
 
-                                if 10 < ctrl_data.sys_az + angles[0] < 170:
-                                    #movement_lock.acquire()
-                                    ctrl_data.sys_az = ctrl_data.sys_az + angles[0]
-                                    azimuth.value = ctrl_data.sys_az
-                                    #movement_lock.release()
-                                if -30 < ctrl_data.sys_el - angles[1] < 30:
-                                    #movement_lock.acquire()
-                                    ctrl_data.sys_el = ctrl_data.sys_el - angles[1]
-                                    elevation.value = ctrl_data.sys_el
-                                    #movement_lock.release()
+                                    if 10 < ctrl_data.sys_az + angles[0] < 170:
+                                        # movement_lock.acquire()
+                                        ctrl_data.sys_az = ctrl_data.sys_az + angles[0]
+                                        print('Angle moving by ' + str(angles[0]) + ' at absolute ' + str(ctrl_data.sys_az))
 
-                                print(ctrl_data.sys_az, ctrl_data.sys_el)
+                                        azimuth.value = ctrl_data.sys_az
+                                        # sleep(0.1)
+                                        # movement_lock.release()
+                                    if -30 < ctrl_data.sys_el - angles[1] < 30:
+                                        # movement_lock.acquire()
+                                        ctrl_data.sys_el = ctrl_data.sys_el - angles[1]
+                                        elevation.value = ctrl_data.sys_el
+                                        # movement_lock.release()
+
+                                    #sleep(2)
+                                    print(ctrl_data.sys_az, ctrl_data.sys_el)
 
                             # cv2.waitKey(1)
 
@@ -593,7 +602,7 @@ class CameraCaptureThread(QThread):
                                           QImage.Format_Grayscale8)
                     else:
                         left_image = cv2.resize(left_image, (qt_img_width, qt_img_height),
-                                                    interpolation=cv2.INTER_AREA)
+                                                interpolation=cv2.INTER_AREA)
                         qt_image = QImage(left_image.data, qt_img_width, qt_img_height, bytes_per_line,
                                           QImage.Format_RGB888)
                     self.detections_signal.emit(det_nmbr)
@@ -1071,8 +1080,8 @@ if __name__ == '__main__':
 
     xbox_serial_process = multiprocessing.Process(target=xbox_serial_process_func,
                                                   args=(
-                                                  heading, azimuth, elevation, laser_v, trigger_v, operation_mode_v,
-                                                  movement_lock))
+                                                      heading, azimuth, elevation, laser_v, trigger_v, operation_mode_v,
+                                                      movement_lock))
     xbox_serial_process.start()
 
     app = QApplication(sys.argv)

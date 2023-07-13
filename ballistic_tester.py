@@ -9,11 +9,10 @@ model = YOLO('yolov8m.pt')  # load an official detection model
 
 from Sentinel.ballistic_calculator import BallisticCalculator
 
+
 def main():
-
     zed = sl.Camera()
-    ser = serial.Serial('COM8', baudrate=115200)
-
+    #ser = serial.Serial('COM8', baudrate=115200)
 
     init = sl.InitParameters()
     init.camera_resolution = sl.RESOLUTION.HD1080
@@ -24,8 +23,8 @@ def main():
     if err != sl.ERROR_CODE.SUCCESS:
         exit(-1)
     image_size = zed.get_camera_information().camera_resolution
-    img_width = 1591
-    img_height = 881
+    img_width = 1920
+    img_height = 1080
     image_size.width = img_width
     image_size.height = img_height
     image = sl.Mat(image_size.width, image_size.height)
@@ -33,21 +32,21 @@ def main():
     while True:
         # Grab an image
         if zed.grab() == sl.ERROR_CODE.SUCCESS:
-            zed.retrieve_image(image, sl.VIEW.LEFT) # Get the left image
+            zed.retrieve_image(image, sl.VIEW.LEFT)  # Get the left image
             frame = image.get_data()
             frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            #frame = cv2.imread("img2.jpg")
+            # frame = cv2.imread("img2.jpg")
             ballistic_computer = BallisticCalculator(resolution=(frame.shape[1], frame.shape[0]))
             width = frame.shape[1]
             height = frame.shape[0]
-            #results = model.track(source=image, tracker="bytetrack.yaml", device=0)
+            # results = model.track(source=image, tracker="bytetrack.yaml", device=0)
             results = model.track(source=frame, tracker="tracker.yaml", device=0)
             result = results[0]
-            cv2.circle(frame, (int(width/2), int(height/2)), 2, (0, 255, 0), 1)
+            cv2.circle(frame, (int(width / 2), int(height / 2)), 2, (0, 255, 0), 1)
 
             detections = sv.Detections.from_yolov8(result)
-            #detections = detections[detections.class_id == 0]
+            detections = detections[detections.class_id == 0]
             centers = []
             for box in detections.xyxy:
                 print(box)
@@ -62,7 +61,8 @@ def main():
             ]
 
             annotated_image = box_annotator.annotate(frame.copy(), detections=detections, labels=labels)
-            cv2.circle(annotated_image, (int(annotated_image.shape[1]/2), int(annotated_image.shape[0]/2)), 2, (0, 255, 0), 4)
+            cv2.circle(annotated_image, (int(annotated_image.shape[1] / 2), int(annotated_image.shape[0] / 2)), 2,
+                       (0, 255, 0), 4)
 
             for center in centers:
                 cv2.circle(annotated_image, center, 2, (0, 0, 255), 2)
@@ -70,12 +70,13 @@ def main():
                 print(angles)
 
             cv2.imshow("Webcam Live", annotated_image)
-            cv2.waitKey(0)
+            cv2.waitKey(1)
             # Quit if 'q' is pressed
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
 
     cv2.destroyAllWindows()
+
 
 if __name__ == '__main__':
     main()
