@@ -7,7 +7,7 @@ import pyzed.sl as sl
 
 model = YOLO('yolov8m.pt')  # load an official detection model
 
-from Sentinel.ballistic_calculator import BallisticCalculator
+from ballistic_calculator import BallisticCalculator
 
 
 def main():

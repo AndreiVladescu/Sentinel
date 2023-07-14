@@ -545,7 +545,7 @@ class CameraCaptureThread(QThread):
                             detections = detections[detections.class_id == 0]
                             centers = []
                             for box in detections.xyxy:
-                                #print(box)
+                                # print(box)
                                 centers.append(
                                     (int(box[0] + (box[2] - box[0]) / 2), int(box[1] + (box[3] - box[1]) / 2)))
                             box_annotator = sv.BoxAnnotator()
@@ -567,21 +567,23 @@ class CameraCaptureThread(QThread):
                                     one_in_ten = 2
                                     angles = ballistic_calculator.get_camera_angles(centers[0][0], centers[0][1])
 
-                                    if 10 < ctrl_data.sys_az + angles[0] < 170:
+                                    if 10 < ctrl_data.sys_az + angles[0] < 170 and abs(angles[0]) > 2:
                                         # movement_lock.acquire()
                                         ctrl_data.sys_az = ctrl_data.sys_az + angles[0]
-                                        print('Angle moving by ' + str(angles[0]) + ' at absolute ' + str(ctrl_data.sys_az))
+                                        print('Angle moving by ' + str(angles[0]) + ' at absolute ' + str(
+                                            ctrl_data.sys_az))
 
                                         azimuth.value = ctrl_data.sys_az
                                         # sleep(0.1)
                                         # movement_lock.release()
-                                    if -30 < ctrl_data.sys_el - angles[1] < 30:
+                                    if -30 < ctrl_data.sys_el - angles[1] < 30 and abs(angles[1]) > 10:
+
                                         # movement_lock.acquire()
                                         ctrl_data.sys_el = ctrl_data.sys_el - angles[1]
                                         elevation.value = ctrl_data.sys_el
                                         # movement_lock.release()
 
-                                    #sleep(2)
+                                    # sleep(2)
                                     print(ctrl_data.sys_az, ctrl_data.sys_el)
 
                             # cv2.waitKey(1)
