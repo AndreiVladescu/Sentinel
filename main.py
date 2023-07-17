@@ -566,20 +566,22 @@ class CameraCaptureThread(QThread):
                                 else:
                                     one_in_ten = 2
                                     angles = ballistic_calculator.get_camera_angles(centers[0][0], centers[0][1])
+                                    az_angle = angles[0] * 0.75
+                                    el_angle = angles[1] * 0.75
 
-                                    if 10 < ctrl_data.sys_az + angles[0] < 170 and abs(angles[0]) > 2:
+                                    if 10 < ctrl_data.sys_az + az_angle < 170 and abs(az_angle) > 2:
                                         # movement_lock.acquire()
-                                        ctrl_data.sys_az = ctrl_data.sys_az + angles[0]
-                                        print('Angle moving by ' + str(angles[0]) + ' at absolute ' + str(
+                                        ctrl_data.sys_az = ctrl_data.sys_az + az_angle
+                                        print('Angle moving by ' + str(az_angle) + ' at absolute ' + str(
                                             ctrl_data.sys_az))
 
                                         azimuth.value = ctrl_data.sys_az
                                         # sleep(0.1)
                                         # movement_lock.release()
-                                    if -30 < ctrl_data.sys_el - angles[1] < 30 and abs(angles[1]) > 10:
+                                    if -30 < ctrl_data.sys_el - el_angle < 30 and abs(el_angle) > 10:
 
                                         # movement_lock.acquire()
-                                        ctrl_data.sys_el = ctrl_data.sys_el - angles[1]
+                                        ctrl_data.sys_el = ctrl_data.sys_el - el_angle
                                         elevation.value = ctrl_data.sys_el
                                         # movement_lock.release()
 
